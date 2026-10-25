@@ -1,0 +1,125 @@
+.slosh-gauge {
+  --sg-w: 88px;
+  --sg-h: 180px;
+  --sg-r: 16px;
+  --sg-glass: #060a14;
+  --sg-liquid: #38bdf8;
+  --sg-on-liquid: #030712;
+  --sg-ticks: 4;
+  --sg-font: 13px;
+
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  width: var(--sg-w);
+  height: var(--sg-h);
+  border-radius: var(--sg-r);
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--sg-glass);
+  border: 1.5px solid rgba(56, 189, 248, 0.25);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6), 0 0 15px rgba(56, 189, 248, 0.08);
+  font-size: var(--sg-font);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.slosh-gauge:hover {
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6), 0 0 20px rgba(56, 189, 248, 0.2);
+}
+
+.slosh-gauge[data-interactive='true'] {
+  cursor: pointer;
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+
+.slosh-gauge[data-disabled='true'] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.slosh-gauge__value {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  pointer-events: none;
+  z-index: 5;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.slosh-gauge__liquid {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 0%;
+  background: linear-gradient(180deg, #38bdf8 0%, #0284c7 100%);
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+  pointer-events: none;
+  transition: height 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.4);
+}
+
+/* Glowing liquid surface line */
+.slosh-gauge__liquid::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: #e0f2fe;
+  box-shadow: 0 0 8px #38bdf8, 0 0 14px #38bdf8;
+}
+
+.slosh-gauge__liquid .slosh-gauge__value {
+  color: #030712;
+  text-shadow: none;
+}
+
+.slosh-gauge__ticks {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 25%;
+  height: 100%;
+  background-image: linear-gradient(to top, rgba(56, 189, 248, 0.35) 0 1.5px, transparent 1.5px);
+  background-size: 100% calc(100% / var(--sg-ticks));
+  background-repeat: repeat-y;
+  background-position: bottom;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.slosh-gauge__marker {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  margin-top: -1px;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.slosh-gauge[data-held='true'] .slosh-gauge__marker {
+  opacity: 1;
+}
