@@ -51,6 +51,60 @@ export async function fetchAvailableGeminiModels(apiKey) {
     .map(m => m.name.replace(/^models\//, ''));
 }
 
+let cachedGroqModels = null;
+let cachedGroqKey = null;
+
+/**
+ * Discovers and prioritizes active chat models for this Groq API key with automatic fallbacks
+ */
+export async function getAvailableGroqModels(apiKey) {
+  if (cachedGroqModels && cachedGroqKey === apiKey) {
+    return cachedGroqModels;
+  }
+  const fallbackModels = [
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'openai/gpt-oss-120b',
+    'mixtral-8x7b-32768'
+  ];
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey.trim()}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const list = (data?.data || [])
+        .map(m => m.id)
+        .filter(id =>
+          id &&
+          !id.includes('whisper') &&
+          !id.includes('guard') &&
+          !id.includes('preview') &&
+          !id.includes('deepseek')
+        );
+
+      const prioritized = [];
+      if (list.includes('llama-3.3-70b-versatile')) prioritized.push('llama-3.3-70b-versatile');
+      if (list.includes('llama-3.1-8b-instant')) prioritized.push('llama-3.1-8b-instant');
+      for (const id of list) {
+        if (!prioritized.includes(id)) prioritized.push(id);
+      }
+
+      if (prioritized.length > 0) {
+        cachedGroqModels = prioritized;
+        cachedGroqKey = apiKey;
+        return prioritized;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  cachedGroqModels = fallbackModels;
+  cachedGroqKey = apiKey;
+  return fallbackModels;
+}
+
+
 /**
  * Generate a new English word with AI
  */
@@ -205,37 +259,7 @@ Return ONLY the raw JSON object conforming to the required schema.`;
 
     if (provider === 'groq') {
       endpoint = 'https://api.groq.com/openai/v1/chat/completions';
-      // Official active Groq models: llama-3.3-70b-versatile is the current flagship
-      models = ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768'];
-
-      try {
-        const groqModelsRes = await fetch('https://api.groq.com/openai/v1/models', {
-          headers: { 'Authorization': `Bearer ${apiKey.trim()}` }
-        });
-        if (groqModelsRes.ok) {
-          const gData = await groqModelsRes.json();
-          const activeList = gData?.data || [];
-          // Filter out decommissioned or deprecated models explicitly
-          const valid = activeList
-            .map(m => m.id)
-            .filter(id =>
-              id &&
-              !id.includes('deepseek') &&
-              !id.includes('llama3-') &&
-              !id.includes('llama-3.1-') &&
-              !id.includes('preview') &&
-              !id.includes('whisper') &&
-              !id.includes('guard')
-            );
-          if (valid.includes('llama-3.3-70b-versatile')) {
-            models = ['llama-3.3-70b-versatile', ...valid.filter(id => id !== 'llama-3.3-70b-versatile')];
-          } else if (valid.length > 0) {
-            models = valid;
-          }
-        }
-      } catch (e) {
-        // Fallback to static active list
-      }
+      models = await getAvailableGroqModels(apiKey);
     } else if (provider === 'openrouter') {
       endpoint = 'https://openrouter.ai/api/v1/chat/completions';
       models = ['google/gemini-2.0-flash-exp:free', 'meta-llama/llama-3.3-70b-instruct:free', 'anthropic/claude-3.5-haiku'];
@@ -459,37 +483,63 @@ export async function executeAiTextPrompt({ provider = 'gemini', apiKey, systemP
 
   // GROQ / OPENAI / OPENROUTER
   let endpoint = 'https://api.openai.com/v1/chat/completions';
-  let model = 'gpt-4o-mini';
+  let candidateModels = ['gpt-4o-mini', 'gpt-4o'];
+
   if (provider === 'groq') {
     endpoint = 'https://api.groq.com/openai/v1/chat/completions';
-    model = 'llama-3.3-70b-versatile';
+    candidateModels = await getAvailableGroqModels(apiKey);
   } else if (provider === 'openrouter') {
     endpoint = 'https://openrouter.ai/api/v1/chat/completions';
-    model = 'google/gemini-2.0-flash-exp:free';
+    candidateModels = [
+      'google/gemini-2.0-flash-exp:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'anthropic/claude-3.5-haiku'
+    ];
   }
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey.trim()}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.7
-    })
-  });
+  let lastError = null;
+  for (const model of candidateModels) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey.trim()}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.7
+        })
+      });
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `${provider} error: ${response.status}`);
+      if (response.ok) {
+        const data = await response.json();
+        const text = data?.choices?.[0]?.message?.content?.trim() || '';
+        if (text) return text;
+      } else {
+        const err = await response.json().catch(() => ({}));
+        lastError = new Error(err?.error?.message || `${provider} error: ${response.status}`);
+        const errMsg = (err?.error?.message || '').toLowerCase();
+        // If this model does not exist or key lacks access, fall through to the next candidate model
+        if (
+          errMsg.includes('does not exist') ||
+          errMsg.includes('not found') ||
+          errMsg.includes('decommissioned') ||
+          errMsg.includes('access')
+        ) {
+          continue;
+        }
+      }
+    } catch (e) {
+      lastError = e;
+    }
   }
-  const data = await response.json();
-  return data?.choices?.[0]?.message?.content?.trim() || '';
+
+  throw lastError || new Error(`Failed to generate response with ${provider}.`);
 }
 
 /**

@@ -4,7 +4,7 @@ import { useTheme } from '../hooks/useTheme';
 import { getTodayDateString } from '../utils/dates';
 import { getExampleData } from '../data/exampleData';
 import { getSupabaseClient } from '../lib/supabase';
-import { fetchCloudData, uploadLocalData, mergeCollections } from '../utils/supabaseSync';
+import { fetchCloudData, uploadLocalData, mergeCollections, deepMergeEntries } from '../utils/supabaseSync';
 
 const DataContext = createContext(null);
 
@@ -130,38 +130,61 @@ export function DataProvider({ children }) {
         }
 
         // 3. Sync Challenges
+        let unifiedChallenges = challenges;
         if (cloudData.challenges && Array.isArray(cloudData.challenges) && cloudData.challenges.length > 0) {
-          setChallenges(cloudData.challenges);
+          unifiedChallenges = cloudData.challenges;
+          setChallenges(unifiedChallenges);
         }
+
+        let unifiedChallengeEntries = challengeEntries;
         if (cloudData.challengeEntries && Object.keys(cloudData.challengeEntries).length > 0) {
-          setChallengeEntries(prev => ({ ...cloudData.challengeEntries, ...prev }));
+          unifiedChallengeEntries = deepMergeEntries(challengeEntries, cloudData.challengeEntries);
+          setChallengeEntries(unifiedChallengeEntries);
         }
-        if (cloudData.challengeCompletionTimes) {
-          setChallengeCompletionTimes(prev => ({ ...cloudData.challengeCompletionTimes, ...prev }));
+
+        let unifiedChallengeCompletionTimes = challengeCompletionTimes;
+        if (cloudData.challengeCompletionTimes && Object.keys(cloudData.challengeCompletionTimes).length > 0) {
+          unifiedChallengeCompletionTimes = deepMergeEntries(challengeCompletionTimes, cloudData.challengeCompletionTimes);
+          setChallengeCompletionTimes(unifiedChallengeCompletionTimes);
         }
-        if (cloudData.challengeDayNotes) {
-          setChallengeDayNotes(prev => ({ ...cloudData.challengeDayNotes, ...prev }));
+
+        let unifiedChallengeDayNotes = challengeDayNotes;
+        if (cloudData.challengeDayNotes && Object.keys(cloudData.challengeDayNotes).length > 0) {
+          unifiedChallengeDayNotes = deepMergeEntries(challengeDayNotes, cloudData.challengeDayNotes);
+          setChallengeDayNotes(unifiedChallengeDayNotes);
         }
 
         // 4. Sync Counters
+        let unifiedCounters = counters;
         if (cloudData.counters && Array.isArray(cloudData.counters) && cloudData.counters.length > 0) {
-          setCounters(cloudData.counters);
+          unifiedCounters = cloudData.counters;
+          setCounters(unifiedCounters);
         }
+
+        let unifiedCounterEntries = counterEntries;
         if (cloudData.counterEntries && Object.keys(cloudData.counterEntries).length > 0) {
-          setCounterEntries(prev => ({ ...cloudData.counterEntries, ...prev }));
+          unifiedCounterEntries = deepMergeEntries(counterEntries, cloudData.counterEntries);
+          setCounterEntries(unifiedCounterEntries);
         }
-        if (cloudData.counterCompletionTimes) {
-          setCounterCompletionTimes(prev => ({ ...cloudData.counterCompletionTimes, ...prev }));
+
+        let unifiedCounterCompletionTimes = counterCompletionTimes;
+        if (cloudData.counterCompletionTimes && Object.keys(cloudData.counterCompletionTimes).length > 0) {
+          unifiedCounterCompletionTimes = deepMergeEntries(counterCompletionTimes, cloudData.counterCompletionTimes);
+          setCounterCompletionTimes(unifiedCounterCompletionTimes);
         }
 
         // 5. Sync Journal
+        let unifiedJournal = journal;
         if (cloudData.journal && Object.keys(cloudData.journal).length > 0) {
-          setJournal(prev => ({ ...cloudData.journal, ...prev }));
+          unifiedJournal = deepMergeEntries(journal, cloudData.journal);
+          setJournal(unifiedJournal);
         }
 
         // 6. Sync SRS Reviews
+        let unifiedSrsReviews = srsReviews;
         if (cloudData.srsReviews && Object.keys(cloudData.srsReviews).length > 0) {
-          setSrsReviews(prev => ({ ...cloudData.srsReviews, ...prev }));
+          unifiedSrsReviews = deepMergeEntries(srsReviews, cloudData.srsReviews);
+          setSrsReviews(unifiedSrsReviews);
         }
 
         // 7. Sync Preferences
@@ -194,16 +217,17 @@ export function DataProvider({ children }) {
           learnedWords,
           favoriteWords,
           aiSettings,
-          challenges: cloudData.challenges || challenges,
-          challengeEntries: { ...(cloudData.challengeEntries || {}), ...challengeEntries },
-          counters: cloudData.counters || counters,
-          counterEntries: { ...(cloudData.counterEntries || {}), ...counterEntries },
-          journal: { ...(cloudData.journal || {}), ...journal },
-          challengeCompletionTimes: { ...(cloudData.challengeCompletionTimes || {}), ...challengeCompletionTimes },
-          counterCompletionTimes: { ...(cloudData.counterCompletionTimes || {}), ...counterCompletionTimes },
-          challengeDayNotes: { ...(cloudData.challengeDayNotes || {}), ...challengeDayNotes },
-          srsReviews: { ...(cloudData.srsReviews || {}), ...srsReviews }
+          challenges: unifiedChallenges,
+          challengeEntries: unifiedChallengeEntries,
+          counters: unifiedCounters,
+          counterEntries: unifiedCounterEntries,
+          journal: unifiedJournal,
+          challengeCompletionTimes: unifiedChallengeCompletionTimes,
+          counterCompletionTimes: unifiedCounterCompletionTimes,
+          challengeDayNotes: unifiedChallengeDayNotes,
+          srsReviews: unifiedSrsReviews
         });
+        isRemoteSyncRef.current = true;
       }
       setLastSyncedAt(new Date().toISOString());
     } catch (err) {
@@ -270,33 +294,50 @@ export function DataProvider({ children }) {
 
   // Auto-sync debounced state updates to cloud whenever challenges, counters, journal change
   const syncTimeoutRef = useRef(null);
+  const isRemoteSyncRef = useRef(false);
+  const latestDataRef = useRef({});
+
+  useEffect(() => {
+    latestDataRef.current = {
+      notes,
+      deletedNoteIds,
+      customWords,
+      settings,
+      learnedWords,
+      favoriteWords,
+      aiSettings,
+      challenges,
+      challengeEntries,
+      counters,
+      counterEntries,
+      journal,
+      challengeCompletionTimes,
+      counterCompletionTimes,
+      challengeDayNotes,
+      srsReviews
+    };
+  });
+
+  const performUpload = useCallback(() => {
+    const client = getSupabaseClient();
+    if (client && currentUser && latestDataRef.current) {
+      uploadLocalData(client, currentUser.id, latestDataRef.current)
+        .catch(err => console.warn('[Auto-sync debounced]', err));
+    }
+  }, [currentUser]);
+
   useEffect(() => {
     if (!currentUser) return;
+    if (isRemoteSyncRef.current) {
+      isRemoteSyncRef.current = false;
+      return;
+    }
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
 
     syncTimeoutRef.current = setTimeout(() => {
-      const client = getSupabaseClient();
-      if (client && currentUser) {
-        uploadLocalData(client, currentUser.id, {
-          notes,
-          deletedNoteIds,
-          customWords,
-          settings,
-          learnedWords,
-          favoriteWords,
-          aiSettings,
-          challenges,
-          challengeEntries,
-          counters,
-          counterEntries,
-          journal,
-          challengeCompletionTimes,
-          counterCompletionTimes,
-          challengeDayNotes,
-          srsReviews
-        }).catch(err => console.warn('[Auto-sync debounced]', err));
-      }
-    }, 2500);
+      performUpload();
+      syncTimeoutRef.current = null;
+    }, 1000);
 
     return () => {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
@@ -304,8 +345,33 @@ export function DataProvider({ children }) {
   }, [
     challenges, challengeEntries, counters, counterEntries, journal,
     challengeCompletionTimes, counterCompletionTimes, challengeDayNotes, srsReviews,
-    currentUser
+    settings, learnedWords, favoriteWords, aiSettings,
+    currentUser, performUpload
   ]);
+
+  // Flush pending changes immediately if the user switches apps, locks screen, or closes tab
+  useEffect(() => {
+    const handleHideOrUnload = () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+        performUpload();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleHideOrUnload);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        handleHideOrUnload();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleHideOrUnload);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [performUpload]);
 
   // Ensure default challenge structure exists only on completely fresh initial installs
   useEffect(() => {
@@ -453,9 +519,69 @@ export function DataProvider({ children }) {
           }
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_preferences'
+        },
+        (payload) => {
+          const row = payload.new;
+          if (!row || (row.user_id && row.user_id !== currentUser.id)) return;
+          console.log('[Kurama Realtime] Received user_preferences update from another device');
+
+          isRemoteSyncRef.current = true;
+
+          if (row.challenges && Array.isArray(row.challenges) && row.challenges.length > 0) {
+            setChallenges(row.challenges);
+          }
+          if (row.challenge_entries && typeof row.challenge_entries === 'object') {
+            setChallengeEntries(row.challenge_entries);
+          }
+          if (row.challenge_completion_times && typeof row.challenge_completion_times === 'object') {
+            setChallengeCompletionTimes(row.challenge_completion_times);
+          }
+          if (row.challenge_day_notes && typeof row.challenge_day_notes === 'object') {
+            setChallengeDayNotes(row.challenge_day_notes);
+          }
+          if (row.counters && Array.isArray(row.counters) && row.counters.length > 0) {
+            setCounters(row.counters);
+          }
+          if (row.counter_entries && typeof row.counter_entries === 'object') {
+            setCounterEntries(row.counter_entries);
+          }
+          if (row.counter_completion_times && typeof row.counter_completion_times === 'object') {
+            setCounterCompletionTimes(row.counter_completion_times);
+          }
+          if (row.journal && typeof row.journal === 'object') {
+            setJournal(row.journal);
+          }
+          if (row.srs_reviews && typeof row.srs_reviews === 'object') {
+            setSrsReviews(row.srs_reviews);
+          }
+          if (row.theme || row.user_name || row.motto) {
+            setSettings(prev => ({
+              ...prev,
+              theme: row.theme || prev.theme,
+              userName: row.user_name || prev.userName,
+              motto: row.motto || prev.motto
+            }));
+          }
+          if (row.learned_word_ids && Array.isArray(row.learned_word_ids)) {
+            setLearnedWords(row.learned_word_ids);
+          }
+          if (row.favorite_word_ids && Array.isArray(row.favorite_word_ids)) {
+            setFavoriteWords(row.favorite_word_ids);
+          }
+          if (row.ai_settings && typeof row.ai_settings === 'object') {
+            setAiSettings(prev => ({ ...prev, ...row.ai_settings }));
+          }
+        }
+      )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('[Kurama Realtime] Subscribed to notes & custom_words channel successfully.');
+          console.log('[Kurama Realtime] Subscribed to notes, custom_words & user_preferences channel successfully.');
         } else if (status === 'CHANNEL_ERROR') {
           console.warn('[Kurama Realtime] Channel subscription error encountered.');
         }

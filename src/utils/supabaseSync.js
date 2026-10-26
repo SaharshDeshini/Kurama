@@ -75,7 +75,8 @@ export async function fetchCloudData(supabase, userId) {
       challengeCompletionTimes,
       counterCompletionTimes,
       challengeDayNotes,
-      srsReviews
+      srsReviews,
+      updatedAt: p?.updated_at || null
     };
   } catch (err) {
     console.error('Error fetching cloud data from Supabase:', err);
@@ -229,3 +230,23 @@ export function mergeCollections(localArr = [], cloudArr = []) {
 
   return Array.from(map.values());
 }
+
+/**
+ * Recursively merges two nested entry maps (e.g., challengeEntries, counterEntries).
+ * Preserves all dates and requirement entries from both, with incoming taking precedence on conflicts.
+ */
+export function deepMergeEntries(base = {}, incoming = {}) {
+  if (!base || typeof base !== 'object') return incoming || {};
+  if (!incoming || typeof incoming !== 'object') return base || {};
+
+  const result = { ...base };
+  for (const [key, val] of Object.entries(incoming)) {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      result[key] = deepMergeEntries(base[key] || {}, val);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+

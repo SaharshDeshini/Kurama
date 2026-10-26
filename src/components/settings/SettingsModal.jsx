@@ -267,7 +267,7 @@ function SettingsForm({ onOpenAuth, onCloseParent }) {
               {[
                 { id: 'gemini', name: 'Google Gemini', desc: 'Gemini 2.0 / 1.5 Flash' },
                 { id: 'claude', name: 'Anthropic Claude', desc: 'Claude 3.5 / 3.7' },
-                { id: 'groq', name: 'Groq Cloud', desc: 'Free LLaMA 3.3 70B' },
+                { id: 'groq', name: 'Groq Cloud', desc: 'Free LLaMA 3.3 / 3.1' },
                 { id: 'openai', name: 'OpenAI', desc: 'GPT-4o & 4o-mini' },
                 { id: 'openrouter', name: 'OpenRouter', desc: 'Free & Custom Models' }
               ].map(p => (
