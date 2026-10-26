@@ -1,12 +1,19 @@
 -- =========================================================
--- KURAMA PERSONAL OS - SUPABASE DATABASE SCHEMA
--- Run this in your Supabase SQL Editor (1-Click Setup)
+-- KURAMA PERSONAL OS - COMPLETE SUPABASE DATABASE SCHEMA
+-- Run this in your Supabase SQL Editor (SQL Editor -> New Query -> Run)
+-- Supports full cross-device sync between Mobile and Laptop:
+--   - Notes (instant real-time concurrency)
+--   - Challenges, streaks, and requirement checks
+--   - Counters, increments, and daily counts
+--   - Daily journal entries
+--   - Productivity heatmaps & completion timestamps
+--   - English Daily vocabulary & SRS reviews
 -- =========================================================
 
 -- 1. Enable UUID Extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 2. Notes Table ("Write there and put it there")
+-- 2. Notes Table ("Write there and put it there" with real-time concurrency)
 CREATE TABLE IF NOT EXISTS public.notes (
   id TEXT PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
@@ -39,7 +46,7 @@ CREATE TABLE IF NOT EXISTS public.custom_words (
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 4. User Preferences & Progress
+-- 4. User Preferences & Complete Cross-Device Operating System State
 CREATE TABLE IF NOT EXISTS public.user_preferences (
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
   user_name TEXT DEFAULT '',
@@ -48,8 +55,29 @@ CREATE TABLE IF NOT EXISTS public.user_preferences (
   learned_word_ids JSONB DEFAULT '[]'::jsonb,
   favorite_word_ids JSONB DEFAULT '[]'::jsonb,
   ai_settings JSONB DEFAULT '{"provider": "gemini", "level": "advanced"}'::jsonb,
+  challenges JSONB DEFAULT '[]'::jsonb,
+  challenge_entries JSONB DEFAULT '{}'::jsonb,
+  counters JSONB DEFAULT '[]'::jsonb,
+  counter_entries JSONB DEFAULT '{}'::jsonb,
+  journal JSONB DEFAULT '{}'::jsonb,
+  challenge_completion_times JSONB DEFAULT '{}'::jsonb,
+  counter_completion_times JSONB DEFAULT '{}'::jsonb,
+  challenge_day_notes JSONB DEFAULT '{}'::jsonb,
+  srs_reviews JSONB DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Safe migrations: Add columns to user_preferences if table was created previously
+ALTER TABLE public.user_preferences 
+  ADD COLUMN IF NOT EXISTS challenges JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS challenge_entries JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS counters JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS counter_entries JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS journal JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS challenge_completion_times JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS counter_completion_times JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS challenge_day_notes JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS srs_reviews JSONB DEFAULT '{}'::jsonb;
 
 -- =========================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -120,9 +148,16 @@ CREATE POLICY "Users can update their own preferences"
   USING (auth.uid() = user_id);
 
 -- =========================================================
--- 5. REALTIME LIVE SYNC PUBLICATION
--- Broadcasts changes across devices instantly
+-- 5. REALTIME LIVE SYNC & REPLICA IDENTITY
+-- Broadcasts changes across devices instantly (including DELETES)
 -- =========================================================
+
+-- Replica Identity FULL ensures Postgres broadcasts full previous records on UPDATE and DELETE
+ALTER TABLE public.notes REPLICA IDENTITY FULL;
+ALTER TABLE public.custom_words REPLICA IDENTITY FULL;
+ALTER TABLE public.user_preferences REPLICA IDENTITY FULL;
+
+-- Add tables to supabase_realtime publication
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -137,5 +172,12 @@ BEGIN
     WHERE pubname = 'supabase_realtime' AND tablename = 'custom_words'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.custom_words;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables 
+    WHERE pubname = 'supabase_realtime' AND tablename = 'user_preferences'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.user_preferences;
   END IF;
 END $$;

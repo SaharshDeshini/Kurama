@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useCallback, useMemo, useState, useEffect } from 'react';
+import React, { createContext, useContext, useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import { useTheme } from '../hooks/useTheme';
 import { getTodayDateString } from '../utils/dates';
@@ -31,20 +31,36 @@ export function DataProvider({ children }) {
   // Optional "what got in the way" notes for failed challenge days (dateStr -> string)
   const [challengeDayNotes, setChallengeDayNotes] = useLocalStorage('personalOS_challengeDayNotes', {});
 
+  // Deleted note IDs tombstone set to prevent resurrecting deleted notes across sync
+  const [deletedNoteIds, setDeletedNoteIds] = useLocalStorage('personalOS_deletedNoteIds', []);
+
   // Note Taker state ("write there and put it there")
-  const [notes, setNotes] = useLocalStorage('personalOS_notes', [
-    {
-      id: 'note_init_1',
-      title: 'Welcome to Quick Notes 📌',
-      text: 'Type a thought, task, or reminder above and put it right here. Pin it, color-code it, or mark it done!',
-      color: 'blue',
-      tag: 'Note',
-      isPinned: true,
-      isDone: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+  const [notes, setNotes] = useLocalStorage('personalOS_notes', () => {
+    try {
+      if (localStorage.getItem('personalOS_welcome_note_dismissed') === 'true') {
+        return [];
+      }
+      const rawDeleted = localStorage.getItem('personalOS_deletedNoteIds');
+      if (rawDeleted && JSON.parse(rawDeleted).includes('note_init_1')) {
+        return [];
+      }
+    } catch {
+      // ignore
     }
-  ]);
+    return [
+      {
+        id: 'note_init_1',
+        title: 'Welcome to Quick Notes 📌',
+        text: 'Type a thought, task, or reminder above and put it right here. Pin it, color-code it, or mark it done!',
+        color: 'blue',
+        tag: 'Note',
+        isPinned: true,
+        isDone: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ];
+  });
 
   // English Daily learned, favorite, and AI custom vocabulary tracking
   const [learnedWords, setLearnedWords] = useLocalStorage('personalOS_learnedWords', []);
@@ -66,7 +82,7 @@ export function DataProvider({ children }) {
   // Apply active theme
   useTheme(settings?.theme || 'dark');
 
-  // Supabase Cloud Sync function
+  // Supabase Cloud Sync function - syncs all user data across devices
   const syncWithCloud = useCallback(async (userOverride = null) => {
     const client = getSupabaseClient();
     const activeUser = userOverride || currentUser;
@@ -76,32 +92,117 @@ export function DataProvider({ children }) {
     try {
       const cloudData = await fetchCloudData(client, activeUser.id);
       if (cloudData) {
-        // Merge notes
-        const mergedNotes = mergeCollections(notes, cloudData.notes || []);
-        setNotes(mergedNotes);
+        // 1. Merge Notes: filter out any deleted notes (especially note_init_1 if deleted)
+        const isWelcomeDismissed = localStorage.getItem('personalOS_welcome_note_dismissed') === 'true';
+        const deletedSet = new Set(deletedNoteIds);
 
-        // Merge custom words
-        const mergedWords = mergeCollections(customWords, cloudData.customWords || []);
-        setCustomWords(mergedWords);
+        const cleanCloudNotes = (cloudData.notes || []).filter(n => {
+          if (n.id === 'note_init_1' && isWelcomeDismissed) return false;
+          return !deletedSet.has(n.id);
+        });
 
-        // Merge preferences
+        // If cloud still holds deleted notes or dismissed welcome note, purge them from Supabase
+        const staleInCloud = (cloudData.notes || []).filter(n => 
+          deletedSet.has(n.id) || (n.id === 'note_init_1' && isWelcomeDismissed)
+        );
+        if (staleInCloud.length > 0) {
+          client.from('notes').delete().in('id', staleInCloud.map(n => n.id)).then(() => {});
+        }
+
+        const isOnlyDefaultLocal = notes.length === 1 && notes[0].id === 'note_init_1';
+        let unifiedNotes = [];
+        if (isWelcomeDismissed && isOnlyDefaultLocal) {
+          unifiedNotes = cleanCloudNotes;
+        } else if (cleanCloudNotes.length > 0) {
+          unifiedNotes = isOnlyDefaultLocal
+            ? cleanCloudNotes
+            : mergeCollections(notes.filter(n => !deletedSet.has(n.id) && !(n.id === 'note_init_1' && isWelcomeDismissed)), cleanCloudNotes);
+        } else {
+          unifiedNotes = notes.filter(n => !deletedSet.has(n.id) && !(n.id === 'note_init_1' && isWelcomeDismissed));
+        }
+        setNotes(unifiedNotes);
+
+        // 2. Merge Custom Vocabulary
+        let unifiedWords = customWords;
+        if (cloudData.customWords) {
+          unifiedWords = mergeCollections(customWords, cloudData.customWords);
+          setCustomWords(unifiedWords);
+        }
+
+        // 3. Sync Challenges
+        if (cloudData.challenges && Array.isArray(cloudData.challenges) && cloudData.challenges.length > 0) {
+          setChallenges(cloudData.challenges);
+        }
+        if (cloudData.challengeEntries && Object.keys(cloudData.challengeEntries).length > 0) {
+          setChallengeEntries(prev => ({ ...cloudData.challengeEntries, ...prev }));
+        }
+        if (cloudData.challengeCompletionTimes) {
+          setChallengeCompletionTimes(prev => ({ ...cloudData.challengeCompletionTimes, ...prev }));
+        }
+        if (cloudData.challengeDayNotes) {
+          setChallengeDayNotes(prev => ({ ...cloudData.challengeDayNotes, ...prev }));
+        }
+
+        // 4. Sync Counters
+        if (cloudData.counters && Array.isArray(cloudData.counters) && cloudData.counters.length > 0) {
+          setCounters(cloudData.counters);
+        }
+        if (cloudData.counterEntries && Object.keys(cloudData.counterEntries).length > 0) {
+          setCounterEntries(prev => ({ ...cloudData.counterEntries, ...prev }));
+        }
+        if (cloudData.counterCompletionTimes) {
+          setCounterCompletionTimes(prev => ({ ...cloudData.counterCompletionTimes, ...prev }));
+        }
+
+        // 5. Sync Journal
+        if (cloudData.journal && Object.keys(cloudData.journal).length > 0) {
+          setJournal(prev => ({ ...cloudData.journal, ...prev }));
+        }
+
+        // 6. Sync SRS Reviews
+        if (cloudData.srsReviews && Object.keys(cloudData.srsReviews).length > 0) {
+          setSrsReviews(prev => ({ ...cloudData.srsReviews, ...prev }));
+        }
+
+        // 7. Sync Preferences
         if (cloudData.preferences) {
+          if (cloudData.preferences.userName || cloudData.preferences.theme) {
+            setSettings(prev => ({
+              ...prev,
+              userName: cloudData.preferences.userName || prev.userName,
+              motto: cloudData.preferences.motto || prev.motto,
+              theme: cloudData.preferences.theme || prev.theme
+            }));
+          }
           if (cloudData.preferences.learnedWords) {
             setLearnedWords(prev => [...new Set([...prev, ...cloudData.preferences.learnedWords])]);
           }
           if (cloudData.preferences.favoriteWords) {
             setFavoriteWords(prev => [...new Set([...prev, ...cloudData.preferences.favoriteWords])]);
           }
+          if (cloudData.preferences.aiSettings) {
+            setAiSettings(prev => ({ ...prev, ...cloudData.preferences.aiSettings }));
+          }
         }
 
-        // Upload unified state
+        // 8. Upload unified state to cloud
         await uploadLocalData(client, activeUser.id, {
-          notes: mergedNotes,
-          customWords: mergedWords,
+          notes: unifiedNotes,
+          deletedNoteIds,
+          customWords: unifiedWords,
           settings,
           learnedWords,
           favoriteWords,
-          aiSettings
+          aiSettings,
+          challenges: cloudData.challenges || challenges,
+          challengeEntries: { ...(cloudData.challengeEntries || {}), ...challengeEntries },
+          counters: cloudData.counters || counters,
+          counterEntries: { ...(cloudData.counterEntries || {}), ...counterEntries },
+          journal: { ...(cloudData.journal || {}), ...journal },
+          challengeCompletionTimes: { ...(cloudData.challengeCompletionTimes || {}), ...challengeCompletionTimes },
+          counterCompletionTimes: { ...(cloudData.counterCompletionTimes || {}), ...counterCompletionTimes },
+          challengeDayNotes: { ...(cloudData.challengeDayNotes || {}), ...challengeDayNotes },
+          srsReviews: { ...(cloudData.srsReviews || {}), ...srsReviews }
         });
       }
       setLastSyncedAt(new Date().toISOString());
@@ -110,7 +211,14 @@ export function DataProvider({ children }) {
     } finally {
       setIsSyncing(false);
     }
-  }, [currentUser, notes, customWords, settings, learnedWords, favoriteWords, aiSettings, setNotes, setCustomWords, setLearnedWords, setFavoriteWords]);
+  }, [
+    currentUser, notes, deletedNoteIds, customWords, settings, learnedWords, favoriteWords, aiSettings,
+    challenges, challengeEntries, counters, counterEntries, journal,
+    challengeCompletionTimes, counterCompletionTimes, challengeDayNotes, srsReviews,
+    setNotes, setCustomWords, setChallenges, setChallengeEntries, setCounters,
+    setCounterEntries, setJournal, setChallengeCompletionTimes, setCounterCompletionTimes,
+    setChallengeDayNotes, setSrsReviews, setSettings, setLearnedWords, setFavoriteWords, setAiSettings
+  ]);
 
   // Listen to Supabase Auth state changes & restore session instantly
   useEffect(() => {
@@ -138,46 +246,83 @@ export function DataProvider({ children }) {
     return () => subscription?.unsubscribe();
   }, []);
 
-  // Restore challenge structure with all previous entries/history wiped clean
+  // Handle mobile tab resume & screen unlock: automatically re-sync when tab becomes visible
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && currentUser) {
+        syncWithCloud(currentUser);
+      }
+    };
+    const handleFocus = () => {
+      if (currentUser) {
+        syncWithCloud(currentUser);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [currentUser, syncWithCloud]);
+
+  // Auto-sync debounced state updates to cloud whenever challenges, counters, journal change
+  const syncTimeoutRef = useRef(null);
+  useEffect(() => {
+    if (!currentUser) return;
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+
+    syncTimeoutRef.current = setTimeout(() => {
+      const client = getSupabaseClient();
+      if (client && currentUser) {
+        uploadLocalData(client, currentUser.id, {
+          notes,
+          deletedNoteIds,
+          customWords,
+          settings,
+          learnedWords,
+          favoriteWords,
+          aiSettings,
+          challenges,
+          challengeEntries,
+          counters,
+          counterEntries,
+          journal,
+          challengeCompletionTimes,
+          counterCompletionTimes,
+          challengeDayNotes,
+          srsReviews
+        }).catch(err => console.warn('[Auto-sync debounced]', err));
+      }
+    }, 2500);
+
+    return () => {
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+    };
+  }, [
+    challenges, challengeEntries, counters, counterEntries, journal,
+    challengeCompletionTimes, counterCompletionTimes, challengeDayNotes, srsReviews,
+    currentUser
+  ]);
+
+  // Ensure default challenge structure exists only on completely fresh initial installs
   useEffect(() => {
     try {
       const resetKey = 'kurama_restore_clean_challenge_v6';
       if (!localStorage.getItem(resetKey)) {
-        // 1. Wipe all historical tracking data/entries clean
-        setChallengeEntries({});
-        setChallengeCompletionTimes({});
-        setChallengeDayNotes({});
-        setCounterEntries({});
-        localStorage.removeItem('personalOS_challengeEntries');
-        localStorage.removeItem('personalOS_challengeCompletionTimes');
-        localStorage.removeItem('personalOS_challengeDayNotes');
-        localStorage.removeItem('personalOS_counterEntries');
-
-        // 2. Check if there was an existing challenge structure to preserve
+        // Only initialize default template if user has NO challenges at all
         let existing = [];
         try {
           const raw = localStorage.getItem('personalOS_challenges');
-          if (raw) {
-            existing = JSON.parse(raw);
-          }
+          if (raw) existing = JSON.parse(raw);
         } catch {
           existing = [];
         }
 
-        const today = getTodayDateString();
-
-        if (Array.isArray(existing) && existing.length > 0 && existing[0]?.dailyRequirements?.length > 0) {
-          // Keep existing challenge structure but reset start date to today so history starts fresh
-          const refreshedChallenges = existing.map(c => ({
-            ...c,
-            startDate: today,
-            status: 'active'
-          }));
-          setChallenges(refreshedChallenges);
-          localStorage.setItem('personalOS_challenges', JSON.stringify(refreshedChallenges));
-          setSettings(prev => ({ ...prev, primaryChallengeId: refreshedChallenges[0].id }));
-        } else {
-          // Restore the standard challenge structure with Water, Questions, Code, and Reading
+        if (!Array.isArray(existing) || existing.length === 0) {
+          const today = getTodayDateString();
           const defaultChallenge = {
             id: 'chlg_discipline_1',
             name: '120 Day Discipline',
@@ -201,27 +346,30 @@ export function DataProvider({ children }) {
         localStorage.setItem(resetKey, 'true');
       }
     } catch (e) {
-      console.warn('Could not reset challenges data:', e);
+      console.warn('Could not initialize challenge data:', e);
     }
-  }, [setChallenges, setChallengeEntries, setChallengeCompletionTimes, setChallengeDayNotes, setCounterEntries, setSettings]);
+  }, [setChallenges, setSettings]);
 
   // Supabase Realtime Live Sync: listen for remote inserts/updates/deletes on notes & custom_words
   useEffect(() => {
     const client = getSupabaseClient();
     if (!client || !currentUser) return;
 
-    const channel = client.channel(`realtime_kurama_${currentUser.id}`)
+    const channelName = `realtime_kurama_${currentUser.id}_${Date.now()}`;
+    const channel = client.channel(channelName)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'notes',
-          filter: `user_id=eq.${currentUser.id}`
+          table: 'notes'
         },
         (payload) => {
           if (payload.eventType === 'INSERT') {
             const row = payload.new;
+            if (row.user_id && row.user_id !== currentUser.id) return;
+            if (row.id === 'note_init_1' && localStorage.getItem('personalOS_welcome_note_dismissed') === 'true') return;
+            if (deletedNoteIds.includes(row.id)) return;
             const newNote = {
               id: row.id,
               title: row.title || '',
@@ -234,13 +382,18 @@ export function DataProvider({ children }) {
               updatedAt: row.updated_at
             };
             setNotes(prev => {
-              if (prev.some(n => n.id === newNote.id)) {
+              const existingIdx = prev.findIndex(n => n.id === newNote.id);
+              if (existingIdx !== -1) {
+                const existingTime = new Date(prev[existingIdx].updatedAt || prev[existingIdx].createdAt || 0).getTime();
+                const incomingTime = new Date(newNote.updatedAt || newNote.createdAt || 0).getTime();
+                if (existingTime >= incomingTime) return prev;
                 return prev.map(n => n.id === newNote.id ? newNote : n);
               }
               return [newNote, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const row = payload.new;
+            if (row.user_id && row.user_id !== currentUser.id) return;
             const updatedNote = {
               id: row.id,
               title: row.title || '',
@@ -254,7 +407,10 @@ export function DataProvider({ children }) {
             };
             setNotes(prev => prev.map(n => n.id === updatedNote.id ? updatedNote : n));
           } else if (payload.eventType === 'DELETE') {
-            setNotes(prev => prev.filter(n => n.id !== payload.old.id));
+            const targetId = payload.old?.id;
+            if (targetId) {
+              setNotes(prev => prev.filter(n => n.id !== targetId));
+            }
           }
         }
       )
@@ -263,12 +419,12 @@ export function DataProvider({ children }) {
         {
           event: '*',
           schema: 'public',
-          table: 'custom_words',
-          filter: `user_id=eq.${currentUser.id}`
+          table: 'custom_words'
         },
         (payload) => {
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             const w = payload.new;
+            if (w.user_id && w.user_id !== currentUser.id) return;
             const formatted = {
               id: w.id,
               word: w.word,
@@ -280,6 +436,8 @@ export function DataProvider({ children }) {
               antonyms: Array.isArray(w.antonyms) ? w.antonyms : [],
               memoryTip: w.memory_tip,
               etymology: w.etymology,
+              isLearned: Boolean(w.is_learned),
+              isFavorite: Boolean(w.is_favorite),
               isAiGenerated: Boolean(w.is_ai_generated),
               createdAt: w.created_at
             };
@@ -288,11 +446,20 @@ export function DataProvider({ children }) {
               return [formatted, ...filtered];
             });
           } else if (payload.eventType === 'DELETE') {
-            setCustomWords(prev => prev.filter(item => item.id !== payload.old.id));
+            const targetId = payload.old?.id;
+            if (targetId) {
+              setCustomWords(prev => prev.filter(item => item.id !== targetId));
+            }
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[Kurama Realtime] Subscribed to notes & custom_words channel successfully.');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.warn('[Kurama Realtime] Channel subscription error encountered.');
+        }
+      });
 
     return () => {
       client.removeChannel(channel);
@@ -586,6 +753,7 @@ export function DataProvider({ children }) {
 
   // ================= NOTE TAKER ACTIONS ("write there and put it there") =================
   const addNote = useCallback((noteData) => {
+    const now = new Date().toISOString();
     const newNote = {
       id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       title: noteData.title ? noteData.title.trim() : '',
@@ -594,28 +762,109 @@ export function DataProvider({ children }) {
       tag: noteData.tag || 'Note',
       isPinned: Boolean(noteData.isPinned),
       isDone: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      createdAt: now,
+      updatedAt: now
     };
     setNotes(prev => [newNote, ...prev]);
+
+    // Instant direct push to Supabase for immediate cross-device real-time sync
+    const client = getSupabaseClient();
+    if (client && currentUser) {
+      client.from('notes').upsert({
+        id: newNote.id,
+        user_id: currentUser.id,
+        title: newNote.title,
+        text: newNote.text,
+        color: newNote.color,
+        tag: newNote.tag,
+        is_pinned: newNote.isPinned,
+        is_done: newNote.isDone,
+        created_at: newNote.createdAt,
+        updated_at: newNote.updatedAt
+      }).then(({ error }) => {
+        if (error) console.error('[Kurama Direct Sync] addNote push error:', error);
+      });
+    }
+
     return newNote;
-  }, [setNotes]);
+  }, [setNotes, currentUser]);
 
   const updateNote = useCallback((noteId, updates) => {
-    setNotes(prev => prev.map(n => n.id === noteId ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n));
-  }, [setNotes]);
+    const now = new Date().toISOString();
+    setNotes(prev => prev.map(n => n.id === noteId ? { ...n, ...updates, updatedAt: now } : n));
+
+    const client = getSupabaseClient();
+    if (client && currentUser) {
+      const dbUpdates = { updated_at: now };
+      if (updates.title !== undefined) dbUpdates.title = updates.title;
+      if (updates.text !== undefined) dbUpdates.text = updates.text;
+      if (updates.color !== undefined) dbUpdates.color = updates.color;
+      if (updates.tag !== undefined) dbUpdates.tag = updates.tag;
+      if (updates.isPinned !== undefined) dbUpdates.is_pinned = Boolean(updates.isPinned);
+      if (updates.isDone !== undefined) dbUpdates.is_done = Boolean(updates.isDone);
+
+      client.from('notes').update(dbUpdates).eq('id', noteId).then(({ error }) => {
+        if (error) console.error('[Kurama Direct Sync] updateNote push error:', error);
+      });
+    }
+  }, [setNotes, currentUser]);
 
   const deleteNote = useCallback((noteId) => {
     setNotes(prev => prev.filter(n => n.id !== noteId));
-  }, [setNotes]);
+
+    // Permanently record deletion so cloud sync or reloads never re-add it
+    setDeletedNoteIds(prev => (prev.includes(noteId) ? prev : [...prev, noteId]));
+    if (noteId === 'note_init_1') {
+      try {
+        localStorage.setItem('personalOS_welcome_note_dismissed', 'true');
+      } catch {}
+    }
+
+    const client = getSupabaseClient();
+    if (client && currentUser) {
+      client.from('notes').delete().eq('id', noteId).then(({ error }) => {
+        if (error) console.error('[Kurama Direct Sync] deleteNote push error:', error);
+      });
+    }
+  }, [setNotes, setDeletedNoteIds, currentUser]);
 
   const togglePinNote = useCallback((noteId) => {
-    setNotes(prev => prev.map(n => n.id === noteId ? { ...n, isPinned: !n.isPinned, updatedAt: new Date().toISOString() } : n));
-  }, [setNotes]);
+    const now = new Date().toISOString();
+    let nextPinned = false;
+    setNotes(prev => prev.map(n => {
+      if (n.id === noteId) {
+        nextPinned = !n.isPinned;
+        return { ...n, isPinned: nextPinned, updatedAt: now };
+      }
+      return n;
+    }));
+
+    const client = getSupabaseClient();
+    if (client && currentUser) {
+      client.from('notes').update({ is_pinned: nextPinned, updated_at: now }).eq('id', noteId).then(({ error }) => {
+        if (error) console.error('[Kurama Direct Sync] togglePinNote push error:', error);
+      });
+    }
+  }, [setNotes, currentUser]);
 
   const toggleCheckNote = useCallback((noteId) => {
-    setNotes(prev => prev.map(n => n.id === noteId ? { ...n, isDone: !n.isDone, updatedAt: new Date().toISOString() } : n));
-  }, [setNotes]);
+    const now = new Date().toISOString();
+    let nextDone = false;
+    setNotes(prev => prev.map(n => {
+      if (n.id === noteId) {
+        nextDone = !n.isDone;
+        return { ...n, isDone: nextDone, updatedAt: now };
+      }
+      return n;
+    }));
+
+    const client = getSupabaseClient();
+    if (client && currentUser) {
+      client.from('notes').update({ is_done: nextDone, updated_at: now }).eq('id', noteId).then(({ error }) => {
+        if (error) console.error('[Kurama Direct Sync] toggleCheckNote push error:', error);
+      });
+    }
+  }, [setNotes, currentUser]);
 
   // ================= ENGLISH DAILY ACTIONS =================
   const toggleWordLearned = useCallback((wordId) => {
@@ -679,11 +928,41 @@ export function DataProvider({ children }) {
       const filtered = prev.filter(w => w.word.toLowerCase() !== word.word.toLowerCase());
       return [word, ...filtered];
     });
-  }, [setCustomWords]);
+
+    const client = getSupabaseClient();
+    if (client && currentUser) {
+      client.from('custom_words').upsert({
+        id: word.id,
+        user_id: currentUser.id,
+        word: word.word,
+        phonetic: word.phonetic || '',
+        part_of_speech: word.partOfSpeech || 'noun',
+        definition: word.definition || '',
+        example: word.example || '',
+        synonyms: word.synonyms || [],
+        antonyms: word.antonyms || [],
+        memory_tip: word.memoryTip || '',
+        etymology: word.etymology || '',
+        is_learned: Boolean(word.isLearned),
+        is_favorite: Boolean(word.isFavorite),
+        is_ai_generated: Boolean(word.isAiGenerated),
+        created_at: word.createdAt || new Date().toISOString()
+      }, { onConflict: 'id' }).then(({ error }) => {
+        if (error) console.error('[Kurama Direct Sync] addCustomWord push error:', error);
+      });
+    }
+  }, [setCustomWords, currentUser]);
 
   const deleteCustomWord = useCallback((wordId) => {
     setCustomWords(prev => prev.filter(w => w.id !== wordId));
-  }, [setCustomWords]);
+
+    const client = getSupabaseClient();
+    if (client && currentUser) {
+      client.from('custom_words').delete().eq('id', wordId).then(({ error }) => {
+        if (error) console.error('[Kurama Direct Sync] deleteCustomWord push error:', error);
+      });
+    }
+  }, [setCustomWords, currentUser]);
 
   // ================= SETTINGS & DATA MANAGEMENT =================
   const updateSettings = useCallback((updates) => {

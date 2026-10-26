@@ -21,6 +21,7 @@ function SettingsForm({ onOpenAuth, onCloseParent }) {
     updateSettings,
     currentUser,
     isSyncing,
+    lastSyncedAt,
     syncWithCloud,
     aiSettings = { provider: 'gemini', apiKey: '', level: 'advanced' },
     updateAiSettings,
@@ -136,9 +137,14 @@ function SettingsForm({ onOpenAuth, onCloseParent }) {
 
         {currentUser && (
           <div className="pt-2.5 border-t border-[#1A2744] flex items-center justify-between text-xs">
-            <span className="text-[11px] text-[#8295B0] flex items-center gap-1">
+            <span className="text-[11px] text-[#8295B0] flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              Notes & vocabulary cloud sync active
+              <span>Full Cross-Device Sync Active</span>
+              {lastSyncedAt && (
+                <span className="text-[10px] text-zinc-500 font-mono">
+                  • {new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              )}
             </span>
             <button
               type="button"
