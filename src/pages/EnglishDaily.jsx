@@ -133,6 +133,7 @@ export function EnglishDaily() {
     try {
       const result = await evaluateUserSentenceWithAi({
         word: currentWord.word,
+        userSentence: practiceSentence.trim(),
         sentence: practiceSentence.trim(),
         provider: aiSettings.provider,
         apiKey: aiSettings.apiKey

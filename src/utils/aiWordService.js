@@ -531,8 +531,9 @@ export async function transformNoteWithAi({ action = 'polish', noteText, provide
 /**
  * Feature 3: Evaluate User Sentence with AI
  */
-export async function evaluateUserSentenceWithAi({ word, userSentence, provider, apiKey }) {
-  if (!userSentence || !userSentence.trim()) throw new Error('Please write a sentence first.');
+export async function evaluateUserSentenceWithAi({ word, userSentence, sentence, provider, apiKey }) {
+  const sentenceToEval = (userSentence || sentence || '').trim();
+  if (!sentenceToEval) throw new Error('Please write a sentence first.');
 
   const system = `You are an encouraging, expert English linguist and language coach.
 Evaluate how the student used the target word in their sentence.
@@ -545,7 +546,7 @@ Always respond with ONLY a single valid JSON object adhering strictly to this sc
 }`;
 
   const user = `Target Word: "${word}"
-Student's Sentence: "${userSentence}"
+Student's Sentence: "${sentenceToEval}"
 
 Check if the word was used with correct meaning, part of speech, and natural collocation. Score out of 10. Respond in JSON.`;
 
@@ -562,14 +563,14 @@ Check if the word was used with correct meaning, part of speech, and natural col
       isCorrect: Boolean(parsed.isCorrect),
       score: Number(parsed.score) || 7,
       feedback: parsed.feedback || 'Good attempt!',
-      improvedVersion: parsed.improvedVersion || userSentence
+      improvedVersion: parsed.improvedVersion || sentenceToEval
     };
   } catch (err) {
     return {
       isCorrect: true,
       score: 8,
       feedback: raw,
-      improvedVersion: userSentence
+      improvedVersion: sentenceToEval
     };
   }
 }

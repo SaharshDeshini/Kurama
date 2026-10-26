@@ -17,8 +17,6 @@ import {
   Plus,
   StickyNote,
   BookA,
-  Loader2,
-  RefreshCw,
   Zap,
   Target,
   ArrowUpRight
@@ -35,10 +33,7 @@ export function Home() {
     notes = [],
     learnedWords = [],
     settings = {},
-    currentUser,
-    isSyncing,
-    syncWithCloud,
-    setIsAuthModalOpen
+    currentUser
   } = useData();
 
   const [chartView, setChartView] = useState('365'); // '365' | '14'
@@ -77,54 +72,12 @@ export function Home() {
 
   return (
     <div className="w-full min-w-0 space-y-6 sm:space-y-8 animate-in fade-in pb-10">
-      {/* 1. Header Bar: Date, Auth & Cloud Sync Status */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1A2744]">
+      {/* 1. Header Bar: Date */}
+      <div className="flex items-center justify-between pb-3 border-b border-[#1A2744]">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-[#8295B0]">
           <span className="text-zinc-200">{dateMeta.weekday}</span>
           <span className="w-1.5 h-1.5 rounded-full bg-[#00B4FF] shadow-glow" />
           <span>{dateMeta.full}</span>
-        </div>
-
-        {/* User Pill / Cloud Sync */}
-        <div className="flex items-center gap-2">
-          {currentUser ? (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[#38BDF8]/30 bg-[#0A101F] text-xs shadow-glow-sm">
-              <div className="w-5 h-5 rounded-full bg-[#38BDF8] text-black font-black flex items-center justify-center text-[10px]">
-                {currentUser.email ? currentUser.email[0].toUpperCase() : 'U'}
-              </div>
-              <span className="text-zinc-200 font-semibold truncate max-w-[130px] sm:max-w-[180px]">
-                {currentUser.email}
-              </span>
-              <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/60 px-1.5 py-0.5 rounded-full border border-emerald-800">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Synced
-              </span>
-              <button
-                type="button"
-                onClick={() => syncWithCloud()}
-                disabled={isSyncing}
-                className="p-1 rounded text-[#8295B0] hover:text-[#38BDF8] transition-colors ml-0.5"
-                title="Force cloud sync"
-              >
-                {isSyncing ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#38BDF8]" />
-                ) : (
-                  <RefreshCw className="w-3.5 h-3.5" />
-                )}
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border-dark bg-[#0A101F] text-xs text-[#8295B0] hover:text-white hover:border-[#38BDF8]/50 transition-all shadow-sm"
-            >
-              <span>Guest Mode</span>
-              <span className="text-[10px] text-[#38BDF8] font-semibold ml-1">
-                Sign In ☁️
-              </span>
-            </button>
-          )}
         </div>
       </div>
 

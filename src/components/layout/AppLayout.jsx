@@ -5,6 +5,7 @@ import { MobileNav } from './MobileNav';
 import { CommandPalette } from '../command/CommandPalette';
 import { SettingsModal } from '../settings/SettingsModal';
 import { AuthModal } from '../auth/AuthModal';
+import { PwaInstallPrompt } from '../common/PwaInstallPrompt';
 import { useData } from '../../context/DataContext';
 
 export function AppLayout() {
@@ -24,6 +25,7 @@ export function AppLayout() {
           <Outlet context={{ openSettings, openAuth }} />
         </div>
       </main>
+      <PwaInstallPrompt />
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} onOpenAuth={openAuth} />
       <AuthModal
         isOpen={isAuthModalOpen}
